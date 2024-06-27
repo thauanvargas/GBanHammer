@@ -18,6 +18,8 @@ import java.io.File;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -26,7 +28,7 @@ import java.util.ResourceBundle;
 @ExtensionInfo(
         Title = "Ban Hammer",
         Description = "While not implemented, ban trolls!",
-        Version = "1.0",
+        Version = "1.1",
         Author = "Thauan"
 )
 
@@ -38,6 +40,7 @@ public class BanHammer extends ExtensionForm implements Initializable {
     public Button buttonClearList;
     public Label labelRoomName;
     protected List<Player> playerList = new ArrayList<>();
+    protected List<String> hardBanList = new ArrayList<>();
     public static String habboUserName;
     public String roomName;
     public String roomId;
@@ -99,21 +102,53 @@ public class BanHammer extends ExtensionForm implements Initializable {
         HPacket hPacket = hMessage.getPacket();
         String message = hPacket.readString(StandardCharsets.ISO_8859_1);
 
-        if (message.contains(":ban") && message.split(" ").length > 0) {
+        if (message.contains(":ban") && message.split(" ").length > 1) {
+            hMessage.setBlocked(true);
             if(roomId == null) {
                 sendToServer(new ShockPacketOutgoing("{out:WHISPER}{s:\" Please reload the room to ban a player!\"}"));
-                hMessage.setBlocked(true);
                 return;
             }
             String playerName = message.split(" ")[1].trim();
-            System.out.println("Banning " + playerName + "...");
+            if(playerListView.getItems().contains(playerName) || message.split(" ").length > 2) {
+                String banType = message.split(" ")[2].trim().toUpperCase();
+                if(!banType.equals("HOUR") && !banType.equals("DAY") && !banType.equals("PERM")) {
+                    sendToServer(new ShockPacketOutgoing("{out:WHISPER}{s:\" Invalid ban type, use hour/day/perm as third argument!\"}"));
+                    return;
+                }
+
+                if(findPlayerByUserName(playerName) == null) {
+                    sendToServer(new ShockPacketOutgoing("{out:WHISPER}{s:\" The user must be in the room to do a HARD Ban, once he joins type the command again!\"}"));
+                    Platform.runLater(() -> {
+                        playerListView.getItems().remove(playerName);
+                    });
+                    return;
+                }
+                sendToServer(new ShockPacketOutgoing("{out:ROOMBAN}{s:\"" + playerName + "\"}{s:\"BAN_USER_" + banType + "\"}"));
+                if(banType.equals("PERM")) {
+                    sendToServer(new ShockPacketOutgoing("{out:WHISPER}{s:\" The user took the BAN HAMMER and won't be able to join your room ever again.\"}"));
+                }else {
+                    sendToServer(new ShockPacketOutgoing("{out:WHISPER}{s:\" The user was hard banned and only will be able to join after a " + banType + " \"}"));
+                }
+
+                Platform.runLater(() -> {
+                    playerListView.getItems().add(playerName + " (HARD BAN) " + banType);
+                });
+                new Thread(this::updateRoomCache).start();
+                return;
+            }
+            System.out.println("Soft banning " + playerName + "...");
             sendToServer(new ShockPacketOutgoing("{out:KICKUSER}{s:\"" + playerName + "\"}"));
+
+            new Thread(() -> {
+                sendToServer(new ShockPacketOutgoing("{out:WHISPER}{s:\" The user " + playerName + " was SOFT banned, type :ban " + playerName + " hour/day/perm\"}"));
+                waitAFckingSec(1000);
+                sendToServer(new ShockPacketOutgoing("{out:WHISPER}{s:\" if he manages to join again (this is a HARD ban and they will only be unbanned after the period).\"}"));
+            }).start();
 
             Platform.runLater(() -> {
                 playerListView.getItems().add(playerName);
             });
             new Thread(this::updateRoomCache).start();
-            hMessage.setBlocked(true);
         }
     }
 
@@ -162,6 +197,13 @@ public class BanHammer extends ExtensionForm implements Initializable {
                     String playerName = hEntity.getName();
                     if (playerName.equals(habboUserName)) {
                         continue;
+                    }
+
+                    Player player = findPlayerByUserName(playerName);
+
+                    if (player == null) {
+                        player = new Player(hEntity.getId(), hEntity.getIndex(), playerName);
+                        playerList.add(player);
                     }
 
                     if(playerListView.getItems().contains(playerName)) {
@@ -241,5 +283,12 @@ public class BanHammer extends ExtensionForm implements Initializable {
         Platform.runLater(() -> {
             playerListView.getItems().clear();
         });
+    }
+
+    public static void waitAFckingSec(int millisecActually) {
+        try {
+            Thread.sleep(millisecActually);
+        } catch (InterruptedException ignored) {
+        }
     }
 }
